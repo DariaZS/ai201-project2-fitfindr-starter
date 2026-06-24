@@ -112,9 +112,9 @@ Each tool reads from and writes to this state dict. No tool receives raw user in
 
 | Tool | Failure mode | Agent response |
 |------|-------------|----------------|
-| search_listings | No results match the query | Tell user no matches found; suggest broadening description, adjusting size or price; stop the flow |
-| suggest_outfit | Wardrobe is empty | Generate generic styling tips from item's style_tags alone; still proceed to fit card |
-| create_fit_card | Outfit input is missing or incomplete | Generate minimal caption from new_item fields (title, price, platform) as fallback |
+| search_listings | No results match the query | "No listings matched your search. Try a broader description, different size, or higher budget." Stop — do not call suggest_outfit. |
+| suggest_outfit | Wardrobe is empty | G"Your wardrobe is empty — here are some general styling tips for this piece based on its style." Proceed to fit card with generic suggestion. |
+| create_fit_card | Outfit input is missing or incomplete | "Here's a simple caption for this find: '[title] from [platform] for $[price] 🛍️'" Use new_item fields as fallback. |
 
 ---
 
