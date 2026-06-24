@@ -1,152 +1,121 @@
 # FitFindr — planning.md
 
-> Complete this document before writing any implementation code.
-> Your spec and agent diagram are what you'll use to direct AI tools (Claude, Copilot, etc.) to generate your implementation — the more specific they are, the more useful the generated code will be.
-> Your planning.md will be reviewed as part of your submission.
-> Update it before starting any stretch features.
-
 ---
 
 ## Tools
 
-List every tool your agent will use. For each tool, fill in all four fields.
-You must have at least 3 tools. The three required tools are listed — add any additional tools below them.
-
 ### Tool 1: search_listings
 
 **What it does:**
-<!-- Describe what this tool does in 1–2 sentences -->
+Searches the mock listings dataset for items matching the user's description, size, and budget. Returns a ranked list of matching listings or an empty list if nothing matches.
 
 **Input parameters:**
-<!-- List each parameter, its type, and what it represents -->
-- `description` (str): ...
-- `size` (str): ...
-- `max_price` (float): ...
+- `description` (str): Natural language description of the item (e.g. "vintage graphic tee")
+- `size` (str): Size filter (e.g. "M", "W30 L30", "XL")
+- `max_price` (float): Maximum price the user is willing to pay
 
 **What it returns:**
-<!-- Describe the return value — what fields does a result contain? -->
+A list of matching listing dicts, each containing: id, title, description, category, style_tags, size, condition, price, colors, brand, platform. Sorted by relevance (style_tags match count).
 
 **What happens if it fails or returns nothing:**
-<!-- What should the agent do if no listings match? -->
+Agent notifies the user that no listings matched and suggests adjusting size, price, or description. Does NOT proceed to suggest_outfit. Optionally retries with loosened constraints (stretch: remove size filter).
 
 ---
 
 ### Tool 2: suggest_outfit
 
 **What it does:**
-<!-- Describe what this tool does in 1–2 sentences -->
+Given a newly found listing and the user's wardrobe, uses the LLM to suggest one or more complete outfit combinations using existing wardrobe pieces.
 
 **Input parameters:**
-<!-- List each parameter, its type, and what it represents -->
-- `new_item` (dict): ...
-- `wardrobe` (dict): ...
+- `new_item` (dict): A single listing dict returned by search_listings
+- `wardrobe` (dict): Wardrobe dict with an `items` key (from get_example_wardrobe() or user input)
 
 **What it returns:**
-<!-- Describe the return value -->
+A string describing one or more outfit combinations, referencing specific wardrobe pieces by name.
 
 **What happens if it fails or returns nothing:**
-<!-- What should the agent do if the wardrobe is empty or no outfit can be suggested? -->
+If wardrobe is empty, agent informs user and generates a generic styling suggestion based on the item's style_tags alone. If LLM call fails, agent returns a fallback message and skips create_fit_card.
 
 ---
 
 ### Tool 3: create_fit_card
 
 **What it does:**
-<!-- Describe what this tool does in 1–2 sentences -->
+Generates a short, casual, shareable caption for the outfit — written in the voice of someone posting to Instagram or TikTok.
 
 **Input parameters:**
-<!-- List each parameter, its type, and what it represents -->
-- `outfit` (str): ...
-- `new_item` (dict): ...
+- `outfit` (str): The outfit suggestion string returned by suggest_outfit
+- `new_item` (dict): The listing dict so the caption can reference price, platform, item name
 
 **What it returns:**
-<!-- Describe the return value -->
+A single string: a 1-3 sentence caption with casual tone, relevant emoji, and specific details (price, platform, key pieces).
 
 **What happens if it fails or returns nothing:**
-<!-- What should the agent do if the outfit data is incomplete? -->
+If outfit string is empty or LLM fails, agent returns a minimal fallback caption using just the new_item fields (title + price + platform).
 
 ---
 
 ### Additional Tools (if any)
 
-<!-- Copy the block above for any tools beyond the required three -->
+### Tool 4: compare_price (stretch)
+
+**What it does:**
+Given a listing, compares its price to similar items in the dataset to estimate whether it's a good deal.
+
+**Input parameters:**
+- `item` (dict): A listing dict
+
+**What it returns:**
+A string: "good deal", "fair price", or "overpriced", plus the average price of comparable items.
+
+**What happens if it fails or returns nothing:**
+If no comparable items found, returns "not enough data to compare" and proceeds without blocking the main flow.
 
 ---
 
 ## Planning Loop
 
-**How does your agent decide which tool to call next?**
-<!-- Describe the logic your planning loop uses. What does it look at? What conditions change its behavior? How does it know when it's done? -->
+The agent runs a sequential loop with conditional branching:
+
+1. Parse user input → extract description, size, max_price, and any wardrobe info
+2. Call search_listings → if empty: report to user and STOP
+3. Pick top result from listings → call suggest_outfit with top result + wardrobe
+4. If suggest_outfit returns empty: report fallback message and STOP before fit card
+5. Call create_fit_card with outfit + new_item
+6. Return final fit card to user
+
+The loop does not call tools in a fixed sequence — step 3 only runs if step 2 returned results, and step 5 only runs if step 3 succeeded. The agent checks return values at each step before proceeding.
 
 ---
 
 ## State Management
 
-**How does information from one tool get passed to the next?**
-<!-- Describe how your agent stores and accesses state within a session. What data is tracked? How is it passed between tool calls? -->
+A session state dict is maintained across tool calls:
+
+```python
+state = {
+    "user_query": str,         # original user message
+    "search_results": list,    # returned by search_listings
+    "selected_item": dict,     # top result chosen from search_results
+    "wardrobe": dict,          # user wardrobe (example or user-provided)
+    "outfit_suggestion": str,  # returned by suggest_outfit
+    "fit_card": str            # returned by create_fit_card
+}
+```
+
+Each tool reads from and writes to this state dict. No tool receives raw user input directly after step 1 — everything flows through state.
 
 ---
 
 ## Error Handling
 
-For each tool, describe the specific failure mode you're handling and what the agent does in response.
-
 | Tool | Failure mode | Agent response |
 |------|-------------|----------------|
-| search_listings | No results match the query | |
-| suggest_outfit | Wardrobe is empty | |
-| create_fit_card | Outfit input is missing or incomplete | |
+| search_listings | No results match the query | Tell user no matches found; suggest broadening description, adjusting size or price; stop the flow |
+| suggest_outfit | Wardrobe is empty | Generate generic styling tips from item's style_tags alone; still proceed to fit card |
+| create_fit_card | Outfit input is missing or incomplete | Generate minimal caption from new_item fields (title, price, platform) as fallback |
 
 ---
 
 ## Architecture
-
-<!-- Draw a diagram of your agent showing how the components connect:
-     User input → Planning Loop → Tools (search_listings, suggest_outfit, create_fit_card)
-                                                                          ↕
-                                                                   State / Session
-     Show what triggers each tool, how state flows between them, and where error paths branch off.
-     Use ASCII art or a Mermaid diagram (https://mermaid.js.org/syntax/flowchart.html).
-     Do NOT embed an image — graders need to read your diagram directly in the file;
-     an embedded image or screenshot cannot be evaluated.
-     You'll share this diagram with an AI tool when asking it to implement
-     the planning loop and each individual tool. -->
-
----
-
-## AI Tool Plan
-
-<!-- For each part of the implementation below, describe:
-     - Which AI tool you plan to use (Claude, Copilot, ChatGPT, etc.)
-     - What you'll give it as input (which sections of this planning.md, your agent diagram)
-     - What you expect it to produce
-     - How you'll verify the output matches your spec before moving on
-
-     "I'll use AI to help me code" is not a plan.
-     "I'll give Claude my Tool 1 spec (inputs, return value, failure mode) and ask it to implement
-     search_listings() using load_listings() from the data loader — then test it against 3 queries
-     before trusting it" is a plan. -->
-
-**Milestone 3 — Individual tool implementations:**
-
-**Milestone 4 — Planning loop and state management:**
-
----
-
-## A Complete Interaction (Step by Step)
-
-Write out what a full user interaction looks like from start to finish — tool call by tool call. Use a specific example query.
-
-**Example user query:** "I'm looking for a vintage graphic tee under $30. I mostly wear baggy jeans and chunky sneakers. What's out there and how would I style it?"
-
-**Step 1:**
-<!-- What does the agent do first? Which tool is called? With what input? -->
-
-**Step 2:**
-<!-- What happens next? What was returned from step 1? What tool is called now? -->
-
-**Step 3:**
-<!-- Continue until the full interaction is complete -->
-
-**Final output to user:**
-<!-- What does the user actually see at the end? -->
